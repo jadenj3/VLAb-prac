@@ -867,7 +867,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             
             if not is_video_key:
                 # Use the original key to query from HF dataset (parquet files use original keys)
-                queries[key] = torch.stack(self.hf_dataset.select(q_idx)[key])
+                values = list(self.hf_dataset.select(q_idx)[key])
+                queries[key] = torch.stack(
+                    [value if isinstance(value, torch.Tensor) else torch.as_tensor(value) for value in values]
+                )
         return queries
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
