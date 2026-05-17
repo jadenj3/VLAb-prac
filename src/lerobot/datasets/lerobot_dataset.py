@@ -835,9 +835,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> dict[str, list[float]]:
         query_timestamps = {}
         for key in self.meta.video_keys:
-            if query_indices is not None and key in query_indices:
-                timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
-                query_timestamps[key] = torch.stack(timestamps).tolist()
+            standardized_key = self.feature_keys_mapping.get(key, key) if self.feature_keys_mapping else key
+            q_idx = None
+            if query_indices is not None:
+                q_idx = query_indices.get(key, query_indices.get(standardized_key))
+            if q_idx is not None:
+                timestamps = list(self.hf_dataset.select(q_idx)["timestamp"])
+                query_timestamps[key] = torch.stack(
+                    [ts if isinstance(ts, torch.Tensor) else torch.as_tensor(ts) for ts in timestamps]
+                ).tolist()
             else:
                 query_timestamps[key] = [current_ts]
 
@@ -849,6 +855,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         hf_columns = set(self.hf_dataset.column_names)
         
         for key, q_idx in query_indices.items():
+            original_key = (
+                self.inverse_feature_keys_mapping.get(key, key) if self.inverse_feature_keys_mapping else key
+            )
             # Map original key to standardized key to check against video_keys
             # video_keys contains standardized keys (e.g., "observation.images.image2")
             # query_indices contains original keys (e.g., "observation.images.side")
@@ -858,16 +867,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
             is_video_key = (
                 key in self.meta.video_keys
                 or standardized_key in self.meta.video_keys
+                or original_key in self.meta.video_keys
             )
             
             # Fallback: if key starts with "observation.images." and is not in HF dataset columns,
             # it's likely a video key (images stored as videos, not in parquet)
-            if not is_video_key and key.startswith("observation.images.") and key not in hf_columns:
+            if (
+                not is_video_key
+                and (key.startswith("observation.images.") or original_key.startswith("observation.images."))
+                and key not in hf_columns
+                and original_key not in hf_columns
+            ):
                 is_video_key = True
             
             if not is_video_key:
                 # Use the original key to query from HF dataset (parquet files use original keys)
-                values = list(self.hf_dataset.select(q_idx)[key])
+                query_key = key if key in hf_columns else original_key
+                values = list(self.hf_dataset.select(q_idx)[query_key])
                 queries[key] = torch.stack(
                     [value if isinstance(value, torch.Tensor) else torch.as_tensor(value) for value in values]
                 )
